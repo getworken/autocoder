@@ -169,8 +169,8 @@ autonomous-coding/
 │   ├── main.py               # FastAPI REST API server
 │   ├── websocket.py          # WebSocket handler for real-time updates
 │   ├── schemas.py            # Pydantic schemas
-│   ├── routers/              # API route handlers
-│   └── services/             # Business logic services
+│   ├── routers/              # API route handlers (projects, features, agent, assistant)
+│   └── services/             # Business logic (assistant chat sessions, database)
 ├── ui/                       # React frontend
 │   ├── src/
 │   │   ├── App.tsx           # Main app component

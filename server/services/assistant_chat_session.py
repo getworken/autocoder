@@ -211,13 +211,16 @@ class AssistantChatSession:
                 self._client_entered = False
                 self.client = None
 
-    async def start(self) -> AsyncGenerator[dict, None]:
+    async def start(self, skip_greeting: bool = False) -> AsyncGenerator[dict, None]:
         """
         Initialize session with the Claude client.
 
         Creates a new conversation if none exists, then sends an initial greeting.
         For resumed conversations, skips the greeting since history is loaded from DB.
         Yields message chunks as they stream in.
+
+        Args:
+            skip_greeting: If True, skip sending the greeting (for resuming conversations)
         """
         # Track if this is a new conversation (for greeting decision)
         is_new_conversation = self.conversation_id is None
