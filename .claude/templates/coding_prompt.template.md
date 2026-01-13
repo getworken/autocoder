@@ -97,6 +97,8 @@ It's ok if you only complete one feature in this session, as there will be more 
 | "Component not built" | Skip | Build the component |
 | "No data to test with" | Skip | Create test data or build data entry flow |
 | "Feature X needs to be done first" | Skip | Build feature X as part of this feature |
+| "This is a refactoring feature" | Skip | Implement the refactoring, verify with build/lint/tests |
+| "Refactoring requirements are vague" | Skip | Interpret the intent, implement, verify code compiles |
 
 If a feature requires building other functionality first, **build that functionality**. You are the coding agent - your job is to make the feature work, not to defer it.
 
