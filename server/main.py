@@ -39,6 +39,7 @@ from .routers import (
     expand_project_router,
     features_router,
     filesystem_router,
+    git_workflow_router,
     import_project_router,
     logs_router,
     projects_router,
@@ -241,6 +242,7 @@ app.include_router(terminal_router)
 app.include_router(import_project_router)
 app.include_router(logs_router)
 app.include_router(security_router)
+app.include_router(git_workflow_router)
 
 
 # ============================================================================

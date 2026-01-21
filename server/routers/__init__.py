@@ -19,6 +19,7 @@ from .terminal import router as terminal_router
 from .import_project import router as import_project_router
 from .logs import router as logs_router
 from .security import router as security_router
+from .git_workflow import router as git_workflow_router
 
 __all__ = [
     "projects_router",
@@ -35,4 +36,5 @@ __all__ = [
     "import_project_router",
     "logs_router",
     "security_router",
+    "git_workflow_router",
 ]
