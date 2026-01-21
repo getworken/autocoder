@@ -247,6 +247,7 @@ app.include_router(security_router)
 app.include_router(git_workflow_router)
 app.include_router(cicd_router)
 app.include_router(templates_router)
+app.include_router(review_router)
 
 
 # ============================================================================
