@@ -46,6 +46,13 @@ EXPAND_FEATURE_TOOLS = [
     "mcp__features__feature_get_stats",
 ]
 
+# Feature creation tools for expand session
+EXPAND_FEATURE_TOOLS = [
+    "mcp__features__feature_create",
+    "mcp__features__feature_create_bulk",
+    "mcp__features__feature_get_stats",
+]
+
 
 async def _make_multimodal_message(content_blocks: list[dict]) -> AsyncGenerator[dict, None]:
     """
