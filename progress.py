@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import urllib.request
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
