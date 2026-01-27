@@ -967,8 +967,6 @@ def feature_update(
     except Exception as e:
         session.rollback()
         return json.dumps({"error": str(e)})
-    finally:
-        session.close()
 
 
 @mcp.tool()
