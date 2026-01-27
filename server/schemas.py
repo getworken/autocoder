@@ -444,7 +444,7 @@ class DeniedCommandItem(BaseModel):
     """Schema for a single denied command entry."""
     command: str
     reason: str
-    timestamp: datetime
+    timestamp: str  # ISO format timestamp string
     project_dir: str | None = None
 
 
