@@ -28,12 +28,54 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
+
+# Essential environment variables to pass to subprocesses
+# This prevents Windows "command line too long" errors by not passing the entire environment
+ESSENTIAL_ENV_VARS = [
+    # Python paths
+    "PATH", "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "CONDA_PREFIX",
+    # Windows essentials
+    "SYSTEMROOT", "COMSPEC", "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    # API keys and auth
+    "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN",
+    "OPENAI_API_KEY", "CLAUDE_API_KEY",
+    # Project configuration
+    "PROJECT_DIR", "AUTOCODER_ALLOW_REMOTE",
+    # Development tools
+    "NODE_PATH", "NPM_CONFIG_PREFIX", "HOME", "USER", "USERNAME",
+    # SSL/TLS
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+]
+
+
+def _get_minimal_env() -> dict[str, str]:
+    """Get minimal environment for subprocess to avoid Windows command line length issues.
+
+    Windows has a command line length limit of ~32KB. When the environment is very large
+    (e.g., with many PATH entries), passing the entire environment can exceed this limit.
+
+    This function returns only essential environment variables needed for Python
+    and API operations.
+
+    Returns:
+        Dictionary of essential environment variables
+    """
+    env = {}
+    for var in ESSENTIAL_ENV_VARS:
+        if var in os.environ:
+            env[var] = os.environ[var]
+
+    # Always ensure PYTHONUNBUFFERED for real-time output
+    env["PYTHONUNBUFFERED"] = "1"
+
+    return env
+
 # Windows-specific: Set ProactorEventLoop policy for subprocess support
 # This MUST be set before any other asyncio operations
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from api.database import Feature, create_database
+from api.database import Feature, checkpoint_wal, create_database
 from api.dependency_resolver import are_dependencies_satisfied, compute_scheduling_scores
 from api.logging_config import log_section, setup_orchestrator_logging
 from progress import has_features
@@ -664,7 +706,7 @@ class ParallelOrchestrator:
                 stderr=subprocess.STDOUT,
                 text=True,
                 cwd=str(AUTOCODER_ROOT),
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                env=_get_minimal_env() if sys.platform == "win32" else {**os.environ, "PYTHONUNBUFFERED": "1"},
             )
         except Exception as e:
             logger.error(f"[TESTING] FAILED to spawn testing agent: {e}")
@@ -710,13 +752,16 @@ class ParallelOrchestrator:
 
         print("Running initializer agent...", flush=True)
 
+        # Use minimal env on Windows to avoid "command line too long" errors
+        subprocess_env = _get_minimal_env() if sys.platform == "win32" else {**os.environ, "PYTHONUNBUFFERED": "1"}
+
         # Use asyncio subprocess for non-blocking I/O
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(AUTOCODER_ROOT),
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=subprocess_env,
         )
 
         logger.info(f"[INIT] Initializer subprocess started | pid={proc.pid}")
@@ -979,6 +1024,31 @@ class ParallelOrchestrator:
                 f"children_found={result.children_found} terminated={result.children_terminated} killed={result.children_killed}"
             )
 
+        # WAL checkpoint to ensure all database changes are persisted
+        self._cleanup_database()
+
+    def _cleanup_database(self) -> None:
+        """Cleanup database connections and checkpoint WAL.
+
+        This ensures all database changes are persisted to the main database file
+        before exit, preventing corruption when multiple agents have been running.
+        """
+        logger.info("[CLEANUP] Starting database cleanup")
+
+        # Checkpoint WAL to flush all changes
+        if checkpoint_wal(self.project_dir):
+            logger.info("[CLEANUP] WAL checkpoint successful")
+        else:
+            logger.warning("[CLEANUP] WAL checkpoint failed or partial")
+
+        # Dispose the engine to release all connections
+        if self._engine is not None:
+            try:
+                self._engine.dispose()
+                logger.info("[CLEANUP] Database engine disposed")
+            except Exception as e:
+                logger.error(f"[CLEANUP] Error disposing engine: {e}")
+
     def _log_startup_info(self) -> None:
         """Log startup banner and settings."""
         log_section(logger, "ORCHESTRATOR STARTUP")
@@ -1172,6 +1242,7 @@ class ParallelOrchestrator:
 
         # Phase 1: Initialization (if needed)
         if not await self._run_initialization_phase():
+            self._cleanup_database()
             return
 
         # Phase 2: Feature loop
@@ -1179,6 +1250,7 @@ class ParallelOrchestrator:
 
         # Phase 3: Cleanup
         await self._wait_for_all_agents()
+        self._cleanup_database()
         print("Orchestrator finished.", flush=True)
 
     async def _run_feature_loop(self) -> None:
