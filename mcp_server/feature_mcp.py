@@ -267,9 +267,9 @@ def feature_verify_quality() -> str:
     checks_config = config.get("checks", {})
     result = verify_quality(
         PROJECT_DIR,
-        run_lint=checks_config.get("lint", True),
-        run_type_check=checks_config.get("type_check", True),
-        run_custom=True,
+        do_lint=checks_config.get("lint", True),
+        do_type_check=checks_config.get("type_check", True),
+        do_custom=True,
         custom_script_path=checks_config.get("custom_script"),
     )
 
