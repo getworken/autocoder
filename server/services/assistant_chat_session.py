@@ -25,6 +25,7 @@ from .assistant_database import (
     create_conversation,
     get_messages,
 )
+from ..gemini_client import is_gemini_configured, stream_chat
 
 # Load environment variables from .env file if present
 load_dotenv()
@@ -206,6 +207,8 @@ class AssistantChatSession:
         self._client_entered: bool = False
         self.created_at = datetime.now()
         self._history_loaded: bool = False  # Track if we've loaded history for resumed conversations
+        self.provider: str = "gemini" if is_gemini_configured() else "claude"
+        self._system_prompt: str | None = None
 
     async def close(self) -> None:
         """Clean up resources and close the Claude client."""
@@ -295,6 +298,7 @@ class AssistantChatSession:
 
         # Get system prompt with project context
         system_prompt = get_system_prompt(self.project_name, self.project_dir)
+        self._system_prompt = system_prompt
 
         # Write system prompt to CLAUDE.md file to avoid Windows command line length limit
         # The SDK will read this via setting_sources=["project"]
@@ -303,11 +307,15 @@ class AssistantChatSession:
             f.write(system_prompt)
         logger.info(f"Wrote assistant system prompt to {claude_md_path}")
 
-        # Use system Claude CLI
-        system_cli = shutil.which("claude")
+        if self.provider == "gemini":
+            logger.info("Assistant session using Gemini provider (no tools).")
+            self.client = None
+        else:
+            # Use system Claude CLI
+            system_cli = shutil.which("claude")
 
-        # Build environment overrides for API configuration
-        sdk_env = {var: os.getenv(var) for var in API_ENV_VARS if os.getenv(var)}
+            # Build environment overrides for API configuration
+            sdk_env = {var: os.getenv(var) for var in API_ENV_VARS if os.getenv(var)}
 
         # Set default max output tokens for GLM 4.7 compatibility if not already set
         if "CLAUDE_CODE_MAX_OUTPUT_TOKENS" not in sdk_env:
@@ -338,15 +346,14 @@ class AssistantChatSession:
                     settings=str(settings_file.resolve()),
                     env=sdk_env,
                 )
-            )
-            logger.info("Entering Claude client context...")
-            await self.client.__aenter__()
-            self._client_entered = True
-            logger.info("Claude client ready")
-        except Exception as e:
-            logger.exception("Failed to create Claude client")
-            yield {"type": "error", "content": f"Failed to initialize assistant: {str(e)}"}
-            return
+                logger.info("Entering Claude client context...")
+                await self.client.__aenter__()
+                self._client_entered = True
+                logger.info("Claude client ready")
+            except Exception as e:
+                logger.exception("Failed to create Claude client")
+                yield {"type": "error", "content": f"Failed to initialize assistant: {str(e)}"}
+                return
 
         # Send initial greeting only for NEW conversations
         # Resumed conversations already have history loaded from the database
@@ -386,7 +393,7 @@ class AssistantChatSession:
             - {"type": "response_done"}
             - {"type": "error", "content": str}
         """
-        if not self.client:
+        if self.provider != "gemini" and not self.client:
             yield {"type": "error", "content": "Session not initialized. Call start() first."}
             return
 
@@ -422,11 +429,15 @@ class AssistantChatSession:
                 logger.info(f"Loaded {len(history)} messages from conversation history")
 
         try:
-            async for chunk in self._query_claude(message_to_send):
-                yield chunk
+            if self.provider == "gemini":
+                async for chunk in self._query_gemini(message_to_send):
+                    yield chunk
+            else:
+                async for chunk in self._query_claude(message_to_send):
+                    yield chunk
             yield {"type": "response_done"}
         except Exception as e:
-            logger.exception("Error during Claude query")
+            logger.exception("Error during assistant query")
             yield {"type": "error", "content": f"Error: {str(e)}"}
 
     async def _query_claude(self, message: str) -> AsyncGenerator[dict, None]:
@@ -467,6 +478,22 @@ class AssistantChatSession:
                         }
 
         # Store the complete response in the database
+        if full_response and self.conversation_id:
+            add_message(self.project_dir, self.conversation_id, "assistant", full_response)
+
+    async def _query_gemini(self, message: str) -> AsyncGenerator[dict, None]:
+        """
+        Query Gemini and stream plain-text responses (no tool calls).
+        """
+        full_response = ""
+        async for text in stream_chat(
+            message,
+            system_prompt=self._system_prompt,
+            model=os.getenv("GEMINI_MODEL"),
+        ):
+            full_response += text
+            yield {"type": "text", "content": text}
+
         if full_response and self.conversation_id:
             add_message(self.project_dir, self.conversation_id, "assistant", full_response)
 
