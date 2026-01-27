@@ -320,6 +320,9 @@ def feature_mark_failing(
         if error_message:
             # Truncate to 10KB to prevent storing huge stack traces
             feature.last_error = error_message[:10240] if len(error_message) > 10240 else error_message
+        else:
+            # Clear stale error message when no new error is provided
+            feature.last_error = None
         session.commit()
         session.refresh(feature)
 
