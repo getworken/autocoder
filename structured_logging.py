@@ -359,7 +359,9 @@ class LogQuery:
 
         if search:
             conditions.append("message LIKE ?")
-            params.append(f"%{search}%")
+            # Escape LIKE wildcards to prevent unexpected query behavior
+            escaped_search = search.replace("%", "\\%").replace("_", "\\_")
+            params.append(f"%{escaped_search}%")
 
         if since:
             conditions.append("timestamp >= ?")
