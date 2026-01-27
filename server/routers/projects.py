@@ -15,6 +15,10 @@ from fastapi import APIRouter, HTTPException
 
 from ..schemas import (
     DatabaseHealth,
+    KnowledgeFile,
+    KnowledgeFileContent,
+    KnowledgeFileList,
+    KnowledgeFileUpload,
     ProjectCreate,
     ProjectDetail,
     ProjectPrompts,
