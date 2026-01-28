@@ -8,6 +8,7 @@ Provides REST API, WebSocket, and static file serving.
 
 import asyncio
 import base64
+import binascii
 import os
 import shutil
 import sys
