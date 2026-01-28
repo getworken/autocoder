@@ -5,7 +5,7 @@
  * Offers the same options as new project creation: Claude or manual spec.
  */
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Bot, FileEdit, Loader2, AlertTriangle } from 'lucide-react'
 import { SpecCreationChat } from './SpecCreationChat'
 import { startAgent } from '../lib/api'
@@ -22,6 +22,12 @@ export function ProjectSetupRequired({ projectName, onSetupComplete }: ProjectSe
   const [initializerStatus, setInitializerStatus] = useState<InitializerStatus>('idle')
   const [initializerError, setInitializerError] = useState<string | null>(null)
   const [yoloModeSelected, setYoloModeSelected] = useState(false)
+  const yoloModeSelectedRef = useRef(yoloModeSelected)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    yoloModeSelectedRef.current = yoloModeSelected
+  }, [yoloModeSelected])
 
   const handleClaudeSelect = () => {
     setShowChat(true)
