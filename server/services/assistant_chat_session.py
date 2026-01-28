@@ -355,9 +355,9 @@ class AssistantChatSession:
                 yield {"type": "error", "content": f"Failed to initialize assistant: {str(e)}"}
                 return
 
-        # Send initial greeting only for NEW conversations
+        # Send initial greeting only for NEW conversations (unless skip_greeting is True)
         # Resumed conversations already have history loaded from the database
-        if is_new_conversation:
+        if is_new_conversation and not skip_greeting:
             # New conversations don't need history loading
             self._history_loaded = True
             if skip_greeting:
@@ -365,10 +365,11 @@ class AssistantChatSession:
             except Exception as e:
                 logger.exception("Failed to send greeting")
                 yield {"type": "error", "content": f"Failed to start conversation: {str(e)}"}
-        else:
+        elif not skip_greeting:
             # For resumed conversations, history will be loaded on first message
             # _history_loaded stays False so send_message() will include history
             yield {"type": "response_done"}
+        # If skip_greeting is True, we don't send any greeting and let the user start immediately
 
     async def send_message(self, user_message: str) -> AsyncGenerator[dict, None]:
         """
