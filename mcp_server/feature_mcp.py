@@ -18,6 +18,7 @@ Tools:
 - feature_clear_in_progress: Clear in-progress status
 - feature_create_bulk: Create multiple features at once
 - feature_create: Create a single feature
+- feature_update: Update a feature's editable fields
 - feature_add_dependency: Add a dependency between features
 - feature_remove_dependency: Remove a dependency
 - feature_get_ready: Get features ready to implement
@@ -800,6 +801,71 @@ def feature_create(
 
 
 @mcp.tool()
+def feature_update(
+    feature_id: Annotated[int, Field(description="The ID of the feature to update", ge=1)],
+    category: Annotated[str | None, Field(default=None, min_length=1, max_length=100, description="New category (optional)")] = None,
+    name: Annotated[str | None, Field(default=None, min_length=1, max_length=255, description="New name (optional)")] = None,
+    description: Annotated[str | None, Field(default=None, min_length=1, description="New description (optional)")] = None,
+    steps: Annotated[list[str] | None, Field(default=None, min_length=1, description="New steps list (optional)")] = None,
+) -> str:
+    """Update an existing feature's editable fields.
+
+    Use this when the user asks to modify, update, edit, or change a feature.
+    Only the provided fields will be updated; others remain unchanged.
+
+    Cannot update: id, priority (use feature_skip), passes, in_progress (agent-controlled)
+
+    Args:
+        feature_id: The ID of the feature to update
+        category: New category (optional)
+        name: New name (optional)
+        description: New description (optional)
+        steps: New steps list (optional)
+
+    Returns:
+        JSON with the updated feature details, or error if not found.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        # Collect updates
+        updates = {}
+        if category is not None:
+            updates["category"] = category
+        if name is not None:
+            updates["name"] = name
+        if description is not None:
+            updates["description"] = description
+        if steps is not None:
+            updates["steps"] = steps
+
+        if not updates:
+            return json.dumps({"error": "No fields to update. Provide at least one of: category, name, description, steps"})
+
+        # Apply updates
+        for field, value in updates.items():
+            setattr(feature, field, value)
+
+        session.commit()
+        session.refresh(feature)
+
+        return json.dumps({
+            "success": True,
+            "message": f"Updated feature: {feature.name}",
+            "feature": feature.to_dict()
+        }, indent=2)
+    except Exception as e:
+        session.rollback()
+        return json.dumps({"error": str(e)})
+    finally:
+        session.close()
+
+
+@mcp.tool()
 def feature_add_dependency(
     feature_id: Annotated[int, Field(ge=1, description="Feature to add dependency to")],
     dependency_id: Annotated[int, Field(ge=1, description="ID of the dependency feature")]
@@ -900,6 +966,74 @@ def feature_remove_dependency(
     except Exception as e:
         session.rollback()
         return json.dumps({"error": f"Failed to remove dependency: {str(e)}"})
+    finally:
+        session.close()
+
+
+@mcp.tool()
+def feature_delete(
+    feature_id: Annotated[int, Field(description="The ID of the feature to delete", ge=1)]
+) -> str:
+    """Delete a feature from the backlog.
+
+    Use this when the user asks to remove, delete, or drop a feature.
+    This removes the feature from tracking only - any implemented code remains.
+
+    For completed features, consider suggesting the user create a new "removal"
+    feature if they also want the code removed.
+
+    Args:
+        feature_id: The ID of the feature to delete
+
+    Returns:
+        JSON with success message and deleted feature details, or error if not found.
+    """
+    session = get_session()
+    try:
+        feature = session.query(Feature).filter(Feature.id == feature_id).first()
+
+        if feature is None:
+            return json.dumps({"error": f"Feature with ID {feature_id} not found"})
+
+        # Check for dependent features that reference this feature
+        # Query all features and filter those that have this feature_id in their dependencies
+        all_features = session.query(Feature).all()
+        dependent_features = [
+            f for f in all_features 
+            if f.dependencies and feature_id in f.dependencies
+        ]
+
+        # Cascade-update dependent features to remove this feature_id from their dependencies
+        if dependent_features:
+            for dependent in dependent_features:
+                deps = dependent.dependencies.copy()
+                deps.remove(feature_id)
+                dependent.dependencies = deps if deps else None
+            session.flush()  # Flush updates before deletion
+
+        # Store details before deletion for confirmation message
+        feature_data = feature.to_dict()
+
+        session.delete(feature)
+        session.commit()
+
+        result = {
+            "success": True,
+            "message": f"Deleted feature: {feature_data['name']}",
+            "deleted_feature": feature_data
+        }
+        
+        # Include info about updated dependencies if any
+        if dependent_features:
+            result["updated_dependents"] = [
+                {"id": f.id, "name": f.name} for f in dependent_features
+            ]
+            result["message"] += f" (removed dependency reference from {len(dependent_features)} dependent feature(s))"
+
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        session.rollback()
+        return json.dumps({"error": str(e)})
     finally:
         session.close()
 

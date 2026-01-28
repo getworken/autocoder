@@ -56,11 +56,13 @@ READONLY_FEATURE_MCP_TOOLS = [
     "mcp__features__feature_get_blocked",
 ]
 
-# Feature management tools (create/skip but not mark_passing)
+# Feature management tools (create/skip/update/delete but not mark_passing)
 FEATURE_MANAGEMENT_TOOLS = [
     "mcp__features__feature_create",
     "mcp__features__feature_create_bulk",
     "mcp__features__feature_skip",
+    "mcp__features__feature_update",
+    "mcp__features__feature_delete",
 ]
 
 # Combined list for assistant
@@ -106,7 +108,9 @@ Your role is to help users understand the codebase, answer questions about featu
 
 **Feature Management:**
 - Create new features/test cases in the backlog
+- Update existing features (name, description, category, steps)
 - Skip features to deprioritize them (move to end of queue)
+- Delete features from the backlog (removes tracking only, code remains)
 - View feature statistics and progress
 
 ## What You CANNOT Do
@@ -137,6 +141,8 @@ If the user asks you to modify code, explain that you're a project assistant and
 - **feature_create**: Create a single feature in the backlog
 - **feature_create_bulk**: Create multiple features at once
 - **feature_skip**: Move a feature to the end of the queue
+- **feature_update**: Update a feature's category, name, description, or steps
+- **feature_delete**: Remove a feature from the backlog (code remains)
 
 ## Creating Features
 
@@ -171,7 +177,7 @@ You: Done! I've added "S3 Sync Integration" to your backlog (ID: 123). It's now 
 2. When explaining code, reference specific file paths and line numbers
 3. Use the feature tools to answer questions about project progress
 4. Search the codebase to find relevant information before answering
-5. When creating features, confirm what was created
+5. When creating or updating features, confirm what was done
 6. If you're unsure about details, ask for clarification"""
 
 
@@ -338,7 +344,7 @@ class AssistantChatSession:
             # New conversations don't need history loading
             self._history_loaded = True
             try:
-                greeting = f"Hello! I'm your project assistant for **{self.project_name}**. I can help you understand the codebase, explain features, and answer questions about the project. What would you like to know?"
+                greeting = f"Hello! I'm your project assistant for **{self.project_name}**. I can help you understand the codebase, manage features (create, edit, delete, and deprioritize), and answer questions about the project. What would you like to do?"
 
                 # Store the greeting in the database
                 add_message(self.project_dir, self.conversation_id, "assistant", greeting)

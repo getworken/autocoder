@@ -43,6 +43,61 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 }
 
+/**
+ * Type-safe helper to get a string value from unknown input
+ */
+function getStringValue(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * Type-safe helper to get a feature ID from unknown input
+ */
+function getFeatureId(value: unknown): string {
+  if (typeof value === "number" || typeof value === "string") {
+    return String(value);
+  }
+  return "unknown";
+}
+
+/**
+ * Get a user-friendly description for tool calls
+ */
+function getToolDescription(
+  tool: string,
+  input: Record<string, unknown>,
+): string {
+  // Handle both mcp__features__* and direct tool names
+  const toolName = tool.replace("mcp__features__", "");
+
+  switch (toolName) {
+    case "feature_get_stats":
+      return "Getting feature statistics...";
+    case "feature_get_next":
+      return "Getting next feature...";
+    case "feature_get_for_regression":
+      return "Getting features for regression testing...";
+    case "feature_create":
+      return `Creating feature: ${getStringValue(input.name, "new feature")}`;
+    case "feature_create_bulk":
+      return `Creating ${Array.isArray(input.features) ? input.features.length : "multiple"} features...`;
+    case "feature_skip":
+      return `Skipping feature #${getFeatureId(input.feature_id)}`;
+    case "feature_update":
+      return `Updating feature #${getFeatureId(input.feature_id)}`;
+    case "feature_delete":
+      return `Deleting feature #${getFeatureId(input.feature_id)}`;
+    case "Read":
+      return `Reading file: ${getStringValue(input.file_path, "file")}`;
+    case "Glob":
+      return `Searching files: ${getStringValue(input.pattern, "pattern")}`;
+    case "Grep":
+      return `Searching content: ${getStringValue(input.pattern, "pattern")}`;
+    default:
+      return `Using tool: ${tool}`;
+  }
+}
+
 export function useAssistantChat({
   projectName,
   onError,
@@ -76,8 +131,9 @@ export function useAssistantChat({
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
-      if (checkAndSendTimeoutRef.current) {
-        clearTimeout(checkAndSendTimeoutRef.current);
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
       }
       if (resumeTimeoutRef.current) {
         clearTimeout(resumeTimeoutRef.current);
@@ -235,38 +291,12 @@ export function useAssistantChat({
           }
 
           case "tool_call": {
-            // Generate user-friendly tool descriptions
-            let toolDescription = `Using tool: ${data.tool}`;
-
-            if (data.tool === "mcp__features__feature_create") {
-              const input = data.input as { name?: string; category?: string };
-              toolDescription = `Creating feature: "${input.name || "New Feature"}" in ${input.category || "General"}`;
-            } else if (data.tool === "mcp__features__feature_create_bulk") {
-              const input = data.input as {
-                features?: Array<{ name: string }>;
-              };
-              const count = input.features?.length || 0;
-              toolDescription = `Creating ${count} feature${count !== 1 ? "s" : ""}`;
-            } else if (data.tool === "mcp__features__feature_skip") {
-              toolDescription = `Skipping feature (moving to end of queue)`;
-            } else if (data.tool === "mcp__features__feature_get_stats") {
-              toolDescription = `Checking project progress`;
-            } else if (data.tool === "mcp__features__feature_get_next") {
-              toolDescription = `Getting next pending feature`;
-            } else if (data.tool === "Read") {
-              const input = data.input as { file_path?: string };
-              const path = input.file_path || "";
-              const filename = path.split("/").pop() || path;
-              toolDescription = `Reading file: ${filename}`;
-            } else if (data.tool === "Glob") {
-              const input = data.input as { pattern?: string };
-              toolDescription = `Searching for files: ${input.pattern || "..."}`;
-            } else if (data.tool === "Grep") {
-              const input = data.input as { pattern?: string };
-              toolDescription = `Searching for: ${input.pattern || "..."}`;
-            }
-
-            // Show tool call as system message
+            // Show tool call as system message with friendly description
+            // Normalize input to object to guard against null/non-object at runtime
+            const input = typeof data.input === "object" && data.input !== null 
+              ? (data.input as Record<string, unknown>) 
+              : {};
+            const toolDescription = getToolDescription(data.tool, input);
             setMessages((prev) => [
               ...prev,
               {
@@ -338,10 +368,10 @@ export function useAssistantChat({
 
   const start = useCallback(
     (existingConversationId?: number | null) => {
-      // Clear any pending check timeout from previous call
-      if (checkAndSendTimeoutRef.current) {
-        clearTimeout(checkAndSendTimeoutRef.current);
-        checkAndSendTimeoutRef.current = null;
+      // Clear any existing connect timeout before starting
+      if (connectTimeoutRef.current) {
+        clearTimeout(connectTimeoutRef.current);
+        connectTimeoutRef.current = null;
       }
 
       connect();
@@ -353,7 +383,8 @@ export function useAssistantChat({
 
       const checkAndSend = () => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
-          checkAndSendTimeoutRef.current = null;
+          // Connection succeeded - clear timeout ref
+          connectTimeoutRef.current = null;
           setIsLoading(true);
           const payload: { type: string; conversation_id?: number } = {
             type: "start",
@@ -367,13 +398,38 @@ export function useAssistantChat({
           }
           wsRef.current.send(JSON.stringify(payload));
         } else if (wsRef.current?.readyState === WebSocket.CONNECTING) {
-          checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100);
+          retryCount++;
+          if (retryCount >= maxRetries) {
+            // Connection timeout - close stuck socket so future retries can succeed
+            if (wsRef.current) {
+              wsRef.current.close();
+              wsRef.current = null;
+            }
+            if (connectTimeoutRef.current) {
+              clearTimeout(connectTimeoutRef.current);
+              connectTimeoutRef.current = null;
+            }
+            setIsLoading(false);
+            onError?.("Connection timeout: WebSocket failed to open");
+            return;
+          }
+          connectTimeoutRef.current = window.setTimeout(checkAndSend, 100);
         } else {
-          checkAndSendTimeoutRef.current = null;
+          // WebSocket is closed or in an error state - close and clear ref so retries can succeed
+          if (wsRef.current) {
+            wsRef.current.close();
+            wsRef.current = null;
+          }
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current);
+            connectTimeoutRef.current = null;
+          }
+          setIsLoading(false);
+          onError?.("Failed to establish WebSocket connection");
         }
       };
 
-      checkAndSendTimeoutRef.current = window.setTimeout(checkAndSend, 100);
+      connectTimeoutRef.current = window.setTimeout(checkAndSend, 100);
     },
     [connect, onError],
   );

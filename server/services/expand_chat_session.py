@@ -53,6 +53,9 @@ EXPAND_FEATURE_TOOLS = [
     "mcp__features__feature_get_stats",
 ]
 
+# Default max output tokens for GLM 4.7 compatibility (131k output limit)
+DEFAULT_MAX_OUTPUT_TOKENS = "131072"
+
 
 async def _make_multimodal_message(content_blocks: list[dict]) -> AsyncGenerator[dict, None]:
     """

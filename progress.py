@@ -138,36 +138,46 @@ def count_passing_tests(project_dir: Path) -> tuple[int, int, int]:
         return 0, 0, 0
 
     try:
-        conn = sqlite3.connect(db_file)
-        cursor = conn.cursor()
-        # Single aggregate query instead of 3 separate COUNT queries
-        # Handle case where in_progress column doesn't exist yet (legacy DBs)
-        try:
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing,
-                    SUM(CASE WHEN in_progress = 1 THEN 1 ELSE 0 END) as in_progress
-                FROM features
-            """)
-            row = cursor.fetchone()
-            total = row[0] or 0
-            passing = row[1] or 0
-            in_progress = row[2] or 0
-        except sqlite3.OperationalError:
-            # Fallback for databases without in_progress column
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing
-                FROM features
-            """)
-            row = cursor.fetchone()
-            total = row[0] or 0
-            passing = row[1] or 0
-            in_progress = 0
-        conn.close()
-        return passing, in_progress, total
+        # Use robust connection with WAL mode and proper timeout
+        with robust_db_connection(db_file) as conn:
+            cursor = conn.cursor()
+            # Single aggregate query instead of 3 separate COUNT queries
+            # Handle case where in_progress column doesn't exist yet (legacy DBs)
+            try:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing,
+                        SUM(CASE WHEN in_progress = 1 THEN 1 ELSE 0 END) as in_progress
+                    FROM features
+                """)
+                row = cursor.fetchone()
+                total = row[0] or 0
+                passing = row[1] or 0
+                in_progress = row[2] or 0
+            except sqlite3.OperationalError:
+                # Fallback for databases without in_progress column
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN passes = 1 THEN 1 ELSE 0 END) as passing
+                    FROM features
+                """)
+                row = cursor.fetchone()
+                total = row[0] or 0
+                passing = row[1] or 0
+                in_progress = 0
+
+            return passing, in_progress, total
+
+    except sqlite3.DatabaseError as e:
+        error_msg = str(e).lower()
+        if "malformed" in error_msg or "corrupt" in error_msg:
+            print(f"[DATABASE CORRUPTION DETECTED in count_passing_tests: {e}]")
+            print(f"[Please run: sqlite3 {db_file} 'PRAGMA integrity_check;' to diagnose]")
+        else:
+            print(f"[Database error in count_passing_tests: {e}]")
+        return 0, 0, 0
     except Exception as e:
         print(f"[Database error in count_passing_tests: {e}]")
         return 0, 0, 0

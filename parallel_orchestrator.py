@@ -119,44 +119,36 @@ def safe_asyncio_run(coro):
         return asyncio.run(coro)
 
 
-class DebugLogger:
-    """Thread-safe debug logger that writes to a file."""
+def safe_asyncio_run(coro):
+    """
+    Run an async coroutine with proper cleanup to avoid Windows subprocess errors.
 
-    def __init__(self, log_file: Path = DEBUG_LOG_FILE):
-        self.log_file = log_file
-        self._lock = threading.Lock()
-        self._session_started = False
-        # DON'T clear on import - only mark session start when run_loop begins
+    On Windows, subprocess transports may raise 'Event loop is closed' errors
+    during garbage collection if not properly cleaned up.
+    """
+    if sys.platform == "win32":
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            # Cancel all pending tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
 
-    def start_session(self):
-        """Mark the start of a new orchestrator session. Clears previous logs."""
-        with self._lock:
-            self._session_started = True
-            with open(self.log_file, "w") as f:
-                f.write(f"=== Orchestrator Debug Log Started: {datetime.now().isoformat()} ===\n")
-                f.write(f"=== PID: {os.getpid()} ===\n\n")
+            # Allow cancelled tasks to complete
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
-    def log(self, category: str, message: str, **kwargs):
-        """Write a timestamped log entry."""
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        with self._lock:
-            with open(self.log_file, "a") as f:
-                f.write(f"[{timestamp}] [{category}] {message}\n")
-                for key, value in kwargs.items():
-                    f.write(f"    {key}: {value}\n")
-                f.write("\n")
+            # Shutdown async generators and executors
+            loop.run_until_complete(loop.shutdown_asyncgens())
+            if hasattr(loop, 'shutdown_default_executor'):
+                loop.run_until_complete(loop.shutdown_default_executor())
 
-    def section(self, title: str):
-        """Write a section header."""
-        with self._lock:
-            with open(self.log_file, "a") as f:
-                f.write(f"\n{'='*60}\n")
-                f.write(f"  {title}\n")
-                f.write(f"{'='*60}\n\n")
-
-
-# Global debug logger instance
-debug_log = DebugLogger()
+            loop.close()
+    else:
+        return asyncio.run(coro)
 
 
 def _dump_database_state(session, label: str = ""):
@@ -617,14 +609,21 @@ class ParallelOrchestrator:
             cmd.append("--yolo")
 
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                cwd=str(AUTOCODER_ROOT),
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            )
+            # CREATE_NO_WINDOW on Windows prevents console window pop-ups
+            # stdin=DEVNULL prevents blocking on stdin reads
+            # Use minimal env to avoid Windows "command line too long" errors
+            popen_kwargs = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "cwd": str(AUTOCODER_ROOT),  # Run from autocoder root for proper imports
+                "env": _get_minimal_env() if sys.platform == "win32" else {**os.environ, "PYTHONUNBUFFERED": "1"},
+            }
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            proc = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as e:
             # Reset in_progress on failure
             session = self.get_session()
